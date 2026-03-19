@@ -272,11 +272,51 @@ agent.addTool(new CalculatorTool());
 ```
 
 ### SearchTool
-搜索工具，支持网页搜索功能。
+搜索工具，支持 Tavily 和 SerpApi 多种搜索源。
 
 ```typescript
-agent.addTool(new SearchTool());
+import { SearchTool } from './src';
+
+// 创建搜索工具 (支持 hybrid/tavily/serpapi)
+const searchTool = new SearchTool('hybrid');
+
+// 基础使用
+agent.addTool(searchTool);
 // 使用: "搜索 TypeScript 教程"
+
+// 高级使用
+const results = await searchTool.execute({
+  query: 'TypeScript 教程',
+  maxResults: 5
+});
+```
+
+#### 环境配置
+
+```env
+# 方式1: Tavily API (推荐)
+TAVILY_API_KEY=your-tavily-key
+
+# 方式2: SerpApi (Google搜索)
+SERPAPI_API_KEY=your-serpapi-key
+```
+
+#### SearchTool 特性
+
+| 特性 | 说明 |
+|------|------|
+| 多源支持 | hybrid/tavily/serpapi |
+| 智能降级 | 主源失败自动切换备源 |
+| AI 摘要 | Tavily 提供直接答案 |
+| 模拟模式 | 无 API 时返回引导信息 |
+
+#### AdvancedSearchTool
+
+```typescript
+import { AdvancedSearchTool } from './src';
+
+const advancedSearch = new AdvancedSearchTool();
+const results = await advancedSearch.search('React vs Vue', 5);
 ```
 
 ### 自定义工具
