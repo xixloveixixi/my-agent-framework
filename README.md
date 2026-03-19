@@ -284,11 +284,27 @@ agent.addTool(new SearchTool());
 ```typescript
 import { BaseTool, Tool } from './src/types';
 
+// 方式1: 继承 BaseTool
 class MyTool extends BaseTool {
   name = 'my_tool';
   description = '我的自定义工具';
 
+  // 定义参数
+  getParameters() {
+    return [
+      {
+        name: 'input',
+        type: 'string',
+        description: '输入内容',
+        required: true
+      }
+    ];
+  }
+
   async execute(params: Record<string, unknown>): Promise<string> {
+    // 自动验证参数
+    this.validateParams(params, ['input']);
+
     const input = params.input as string;
     // 自定义逻辑
     return `处理结果: ${input}`;
@@ -296,6 +312,30 @@ class MyTool extends BaseTool {
 }
 
 agent.addTool(new MyTool());
+
+// 方式2: 直接实现 Tool 接口
+const customTool: Tool = {
+  name: 'hello',
+  description: '打招呼工具',
+  execute: async (params) => `你好, ${params.name}!`
+};
+```
+
+#### BaseTool 核心功能
+
+| 方法 | 说明 |
+|------|------|
+| getParameters() | 获取工具参数定义 |
+| validateParams() | 验证必填参数 |
+| toOpenAISchema() | 转换为 OpenAI Function Calling 格式 |
+
+#### OpenAI Function Calling 集成
+
+```typescript
+const tool = new CalculatorTool();
+// 转换为 OpenAI 格式
+const schema = tool.toOpenAISchema();
+// 可直接用于 OpenAI API 的 function call
 ```
 
 ## 配置
