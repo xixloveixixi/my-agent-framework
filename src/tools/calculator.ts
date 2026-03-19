@@ -1,21 +1,25 @@
 /**
  * Calculator Tool - 计算器工具
  */
-import { BaseTool } from './base';
+import { BaseTool, ToolParameter } from './base';
 
 export class CalculatorTool extends BaseTool {
   name = 'calculator';
   description = '执行数学计算，支持基本运算(+,-,*,/,%)和数学函数';
-  parameters = {
-    type: 'object',
-    properties: {
-      expression: {
+
+  /**
+   * 获取参数定义
+   */
+  getParameters(): ToolParameter[] {
+    return [
+      {
+        name: 'expression',
         type: 'string',
-        description: '要计算的数学表达式',
+        description: '要计算的数学表达式，如 "2+3*4"',
+        required: true,
       },
-    },
-    required: ['expression'],
-  };
+    ];
+  }
 
   async execute(params: Record<string, unknown>): Promise<string> {
     const expression = params.expression as string;
