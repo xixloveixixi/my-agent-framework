@@ -98,8 +98,33 @@ export class ReActAgent extends Agent {
       console.log(`💭 Thought: ${thought || '(无)'}`);
       console.log(`🎬 Action: ${action || '(无)'}`);
 
-      // 4. 检查完成条件 - Finish[答案]
-      if (action && action.startsWith('Finish')) {
+      // 4. 检查 action 有效性 - 防止空转
+      if (!action || action.trim() === '') {
+        console.log('⚠️ 无法解析 Action，继续尝试或结束');
+
+        // 检查是否有有效的 thought，如果有说明模型在思考但无法生成有效 action
+        if (thought && thought.length > 10) {
+          // 再给一次机会，直接返回 thought 作为响应
+          this.addMessage(new Message(input, 'user'));
+          this.addMessage(new Message(thought, 'assistant'));
+          return thought;
+        }
+
+        // 达到最大步数限制
+        if (currentStep >= maxSteps) {
+          const finalAnswer = '抱歉，我无法在限定步数内完成这个任务。';
+          this.addMessage(new Message(input, 'user'));
+          this.addMessage(new Message(finalAnswer, 'assistant'));
+          console.log(`❌ 达到最大步数: ${maxSteps}`);
+          return finalAnswer;
+        }
+
+        // 继续下一轮尝试
+        continue;
+      }
+
+      // 5. 检查完成条件 - Finish[答案]
+      if (action.startsWith('Finish')) {
         const finalAnswer = this.parseActionInput(action);
         console.log(`✅ 最终答案: ${finalAnswer}`);
 
@@ -108,37 +133,36 @@ export class ReActAgent extends Agent {
         return finalAnswer;
       }
 
-      // 5. 执行工具调用
-      if (action) {
-        const { toolName, toolInput } = this.parseAction(action);
+      // 6. 执行工具调用
+      const { toolName, toolInput } = this.parseAction(action);
 
-        if (this.verbose) {
-          console.log(`🔧 执行工具: ${toolName}`);
-          console.log(`📥 工具输入: ${JSON.stringify(toolInput)}`);
-        }
-
-        // 从 ToolRegistry 执行
-        let observation: string;
-        if (this.toolRegistry) {
-          observation = await this.toolRegistry.executeTool(toolName, toolInput as Record<string, unknown>);
-        } else {
-          // 回退到基类的 tools
-          observation = await this.executeTool(toolName, toolInput as Record<string, unknown>);
-        }
-
-        console.log(`📤 观察结果: ${observation}`);
-
-        // 记录到执行历史
-        this.currentHistory.push(`Action: ${action}`);
-        this.currentHistory.push(`Observation: ${observation}`);
-      } else {
-        // 没有 action，可能是最终响应
-        console.log(`📝 直接响应: ${responseText}`);
-
+      // 检查工具是否存在
+      if (!this.toolRegistry?.has(toolName) && !this.tools.has(toolName) && toolName !== 'Finish') {
+        console.log(`⚠️ 工具 '${toolName}' 不存在，将作为最终响应处理`);
         this.addMessage(new Message(input, 'user'));
         this.addMessage(new Message(responseText, 'assistant'));
         return responseText;
       }
+
+      if (this.verbose) {
+        console.log(`🔧 执行工具: ${toolName}`);
+        console.log(`📥 工具输入: ${JSON.stringify(toolInput)}`);
+      }
+
+      // 从 ToolRegistry 执行
+      let observation: string;
+      if (this.toolRegistry) {
+        observation = await this.toolRegistry.executeTool(toolName, toolInput as Record<string, unknown>);
+      } else {
+        // 回退到基类的 tools
+        observation = await this.executeTool(toolName, toolInput as Record<string, unknown>);
+      }
+
+      console.log(`📤 观察结果: ${observation}`);
+
+      // 记录到执行历史
+      this.currentHistory.push(`Action: ${action}`);
+      this.currentHistory.push(`Observation: ${observation}`);
     }
 
     // 达到最大步数

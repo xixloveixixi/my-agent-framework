@@ -9,6 +9,7 @@ import { AgentConfig, Tool, MessageRole } from '../types';
 
 export class SimpleAgent extends Agent {
   private enableToolCalling: boolean;
+  private toolRegistry?: ToolRegistry;
 
   constructor(
     name: string,
@@ -20,10 +21,18 @@ export class SimpleAgent extends Agent {
   ) {
     super(name, llm, options);
 
-    this.enableToolCalling = (options?.enableToolCalling ?? true) &&
-      (options?.toolRegistry !== undefined || this.tools.size > 0);
+    this.toolRegistry = options?.toolRegistry;
+
+    // 计算可用工具数量
+    const toolCount = (this.toolRegistry?.size() || 0) + this.tools.size;
+
+    // 只有明确启用且有可用工具时才开启
+    this.enableToolCalling = (options?.enableToolCalling ?? true) && toolCount > 0;
 
     console.log(`✅ ${name} 初始化完成，工具调用: ${this.enableToolCalling ? '启用' : '禁用'}`);
+    if (this.enableToolCalling) {
+      console.log(`🔧 可用工具数量: ${toolCount}`);
+    }
   }
 
   /**
