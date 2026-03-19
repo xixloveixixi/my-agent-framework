@@ -156,7 +156,61 @@ const agent = new ReActAgent('数学助手', llm, {
 ```
 
 ### PlanAndSolveAgent
-先制定计划，再执行计划的 Agent。适合复杂任务分解。
+先制定计划，再逐步执行的 Agent。适合复杂任务分解和多步骤问题处理。
+
+```typescript
+import { PlanAndSolveAgent, HelloAgentsLLM } from './src';
+
+// 创建 PlanAndSolveAgent
+const agent = new PlanAndSolveAgent('规划助手', llm, {
+  maxSteps: 10,    // 最大执行步骤
+  verbose: true    // 详细输出模式
+});
+
+// 运行
+const result = await agent.run('请写一个快速排序算法并解释其时间复杂度');
+console.log(result);
+
+// 单步执行（用于调试）
+const plan = await agent.plan('如何学习 TypeScript？');
+console.log('计划:', plan);
+
+const execution = await agent.execute(plan, '如何学习 TypeScript？');
+console.log('执行结果:', execution);
+```
+
+#### PlanAndSolveAgent 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| maxSteps | number | 10 | 最大执行步骤数 |
+| customPrompts | Partial\<PlanAndSolvePrompts\> | DEFAULT_PROMPTS | 自定义提示词模板 |
+| verbose | boolean | false | 是否输出详细日志 |
+
+#### 工作流程
+
+1. **Plan (Planner)**: 将复杂问题分解为多个步骤的 Python 列表
+2. **Execute (Executor)**: 按顺序逐步执行每个步骤
+3. **Combine**: 整合所有步骤的结果作为最终答案
+
+#### 自定义提示词
+
+```typescript
+const agent = new PlanAndSolveAgent('助手', llm, {
+  customPrompts: {
+    planner: `将问题分解为步骤:
+问题: {question}
+
+输出 JSON 数组格式: ["步骤1", "步骤2"]`,
+    executor: `问题: {question}
+计划: {plan}
+历史: {history}
+当前步骤: {current_step}
+
+只输出当前步骤的结果:`
+  }
+});
+```
 
 ### ReflectionAgent
 具备自我反思能力的 Agent，通过多轮反思和改进来提升回答质量。
