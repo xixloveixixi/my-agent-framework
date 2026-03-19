@@ -159,7 +159,53 @@ const agent = new ReActAgent('数学助手', llm, {
 先制定计划，再执行计划的 Agent。适合复杂任务分解。
 
 ### ReflectionAgent
-具备自我反思能力的 Agent，可以评估和改进自己的输出。
+具备自我反思能力的 Agent，通过多轮反思和改进来提升回答质量。
+
+```typescript
+import { ReflectionAgent, HelloAgentsLLM } from './src';
+
+// 创建 ReflectionAgent
+const agent = new ReflectionAgent('反思助手', llm, {
+  maxReflections: 3,    // 最大反思次数
+  verbose: true          // 详细输出模式
+});
+
+// 运行
+const result = await agent.run('请解释什么是 TypeScript 泛型？');
+console.log(result);
+
+// 单步执行（用于调试）
+const initial = await agent.generate('解释 React Hooks');
+const reflection = await agent.reflectOn('解释 React Hooks', initial);
+const refined = await agent.refine('解释 React Hooks', initial, reflection);
+```
+
+#### ReflectionAgent 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| maxReflections | number | 3 | 最大反思次数 |
+| customPrompts | Partial\<PromptTemplates\> | DEFAULT_PROMPTS | 自定义提示词模板 |
+| verbose | boolean | false | 是否输出详细日志 |
+
+#### 工作流程
+
+1. **Generate**: 根据任务生成初始响应
+2. **Reflect**: 反思当前响应，找出不足之处
+3. **Refine**: 根据反馈改进响应
+4. 重复步骤 2-3 直到满意或达到最大次数
+
+#### 自定义提示词
+
+```typescript
+const agent = new ReflectionAgent('助手', llm, {
+  customPrompts: {
+    initial: '请用简洁的语言解释: {task}',
+    reflect: '检查以下回答是否准确: {content}',
+    refine: '改进以下回答: {last_attempt}，反馈: {feedback}'
+  }
+});
+```
 
 ## 工具
 
