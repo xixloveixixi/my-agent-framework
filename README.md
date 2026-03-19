@@ -91,6 +91,70 @@ const result = await agent.run('你好，请介绍一下自己');
 ### ReActAgent
 ReAct (Reasoning + Acting) 模式的 Agent，通过推理和行动循环来解决问题。
 
+```typescript
+import { ReActAgent, HelloAgentsLLM, CalculatorTool, ToolRegistry } from './src';
+
+// 创建工具注册表
+const registry = new ToolRegistry();
+registry.register(new CalculatorTool());
+
+// 创建 ReActAgent
+const agent = new ReActAgent('研究助手', llm, {
+  toolRegistry: registry,
+  maxSteps: 10,           // 最大推理步数
+  verbose: true           // 详细输出模式
+});
+
+// 运行
+const result = await agent.run('计算 15 * 25 + 30 等于多少？');
+console.log(result);
+
+// 获取执行历史
+console.log(agent.getExecutionHistory());
+```
+
+#### ReActAgent 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| toolRegistry | ToolRegistry | undefined | 工具注册表 |
+| maxSteps | number | 5 | 最大推理步数 |
+| customPrompt | string | DEFAULT_REACT_PROMPT | 自定义提示词模板 |
+| verbose | boolean | false | 是否输出详细日志 |
+
+#### 工作流程
+
+1. **Thought**: 分析当前问题，思考需要什么信息
+2. **Action**: 选择工具执行或 Finish 给出最终答案
+3. **Observation**: 获取工具执行结果
+4. 重复步骤 1-3 直到得到最终答案
+
+#### 自定义提示词
+
+```typescript
+const customPrompt = `你是一个专业的数学助手。
+
+## 可用工具
+{tools}
+
+## 工作流程
+Thought: 分析问题
+Action: calculator[表达式] 或 Finish[答案]
+
+## 问题
+**Question:** {question}
+
+## 历史
+{history}
+
+开始推理:`;
+
+const agent = new ReActAgent('数学助手', llm, {
+  customPrompt,
+  maxSteps: 10
+});
+```
+
 ### PlanAndSolveAgent
 先制定计划，再执行计划的 Agent。适合复杂任务分解。
 
