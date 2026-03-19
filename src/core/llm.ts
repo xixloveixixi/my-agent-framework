@@ -1,9 +1,9 @@
 /**
  * LLM 客户端 - 支持多种提供商，可通过继承扩展
  */
-import { LLMConfig, Provider, Message, MessageRole } from '../types';
+import { LLMConfig, Provider, MessageRole } from '../types';
 
-// 消息格式接口（兼容简单对象和 Message 类）
+// 消息格式接口
 export interface MessageInput {
   role: MessageRole;
   content: string;
