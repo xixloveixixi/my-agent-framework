@@ -20,6 +20,11 @@ export { BaseTool } from './tools/base';
 export { ToolRegistry } from './tools/registry';
 export { CalculatorTool } from './tools/calculator';
 export { SearchTool } from './tools/search';
+export { MemoryTool, LongTermMemoryTool } from './tools/memory-tool';
+export { RAGTool, RAGQATool } from './tools/rag-tool';
+
+// Memory 模块
+export * from './memory';
 
 // Types
 export * from './types';

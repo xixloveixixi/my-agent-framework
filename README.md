@@ -66,14 +66,35 @@ src/
 │   ├── base.ts           # 工具基类
 │   ├── calculator.ts     # 计算器工具
 │   ├── search.ts         # 搜索工具
+│   ├── memory-tool.ts    # 记忆工具
+│   ├── rag-tool.ts       # RAG 工具
 │   ├── registry.ts       # 工具注册表
 │   └── index.ts          # 工具导出
+│
+├── memory/               # 记忆模块
+│   ├── base.ts           # 记忆基类
+│   ├── manager.ts        # 记忆管理器
+│   ├── store.ts          # 存储层
+│   ├── embedding.ts      # 嵌入服务
+│   ├── retriever.ts      # 检索层
+│   ├── types/            # 记忆类型定义
+│   │   ├── working.ts    # 工作记忆
+│   │   ├── episodic.ts   # 情景记忆
+│   │   ├── semantic.ts  # 语义记忆
+│   │   └── perceptual.ts # 感知记忆
+│   ├── storage/          # 存储实现
+│   │   ├── memory-store.ts
+│   │   ├── qdrant-store.ts
+│   │   └── neo4j-store.ts
+│   └── rag/              # RAG 实现
+│       └── pipeline.ts
 │
 ├── types/                # 类型定义
 │   └── index.ts
 │
 ├── examples/             # 示例
-│   └── custom-llm.ts     # 自定义 LLM 示例
+│   ├── custom-llm.ts     # 自定义 LLM 示例
+│   └── memory-example.ts # 记忆示例
 │
 └── index.ts             # 主入口
 ```
@@ -377,6 +398,161 @@ const tool = new CalculatorTool();
 const schema = tool.toOpenAISchema();
 // 可直接用于 OpenAI API 的 function call
 ```
+
+## 记忆系统
+
+HelloAgents 提供了完整的记忆系统，支持多种记忆类型和存储后端。
+
+### 记忆类型
+
+| 类型 | 说明 | 存储 |
+|------|------|------|
+| Working (工作记忆) | 当前会话的短期记忆 | 内存 |
+| Episodic (情景记忆) | 过往交互的经历 | 内存/持久化 |
+| Semantic (语义记忆) | 结构化知识和概念 | Neo4j 图数据库 |
+| Perceptual (感知记忆) | 图像、音频等感知数据 | 文档存储 |
+
+### MemoryManager
+
+```typescript
+import { MemoryManager, MemoryType } from './src';
+
+const memoryManager = new MemoryManager({
+  storageType: 'memory',  // memory/qdrant/neo4j
+  embedding: {
+    provider: 'openai',
+    model: 'text-embedding-ada-002'
+  }
+});
+
+// 添加记忆
+await memoryManager.addMemory({
+  content: '用户喜欢蓝色的主题',
+  memoryType: MemoryType.EPISODIC,
+  importance: 0.8
+});
+
+// 搜索记忆
+const results = await memoryManager.search('用户偏好', 5);
+
+// 遗忘低重要性记忆
+await memoryManager.forgetMemories({
+  strategy: 'importance_based',
+  threshold: 0.2
+});
+```
+
+### MemoryTool
+
+为 Agent 提供的记忆工具，支持搜索、添加、整合等操作。
+
+```typescript
+import { MemoryTool, MemoryManager } from './src';
+
+const memoryManager = new MemoryManager();
+const memoryTool = new MemoryTool(memoryManager);
+
+agent.addTool(memoryTool);
+
+// 使用工具操作记忆
+// action: search/add/clear/stats/consolidate/forget
+```
+
+#### MemoryTool 参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| action | string | 操作类型 |
+| content | string | 记忆内容 |
+| query | string | 搜索关键词 |
+| memory_type | string | 记忆类型 |
+| importance | number | 重要性 (0-1) |
+
+### 存储后端
+
+#### 内存存储 (默认)
+
+```typescript
+const manager = new MemoryManager({
+  storageType: 'memory'
+});
+```
+
+#### Qdrant 向量存储
+
+```typescript
+const manager = new MemoryManager({
+  storageType: 'qdrant',
+  qdrant: {
+    url: 'http://localhost:6333',
+    collection: 'my-agent-memory'
+  }
+});
+```
+
+#### Neo4j 图存储
+
+```typescript
+const manager = new MemoryManager({
+  storageType: 'neo4j',
+  neo4j: {
+    url: 'bolt://localhost:7687',
+    username: 'neo4j',
+    password: 'password'
+  }
+});
+```
+
+## RAG (检索增强生成)
+
+RAG 模块提供文档检索和问答能力。
+
+### RAGTool
+
+```typescript
+import { RAGTool, RAGPipeline } from './src';
+
+// 创建 RAG pipeline
+const ragPipeline = new RAGPipeline({
+  embedding: {
+    provider: 'openai',
+    model: 'text-embedding-ada-002'
+  },
+  vectorStore: {
+    provider: 'qdrant',
+    url: 'http://localhost:6333'
+  }
+});
+
+// 添加文档
+await ragPipeline.addDocuments([
+  { content: 'TypeScript 是微软开发的...' },
+  { content: 'React 是 Facebook 开发的...' }
+]);
+
+// 问答
+const answer = await ragPipeline.query('什么是 TypeScript?');
+```
+
+### RAGQAtTool
+
+基于 RAG 的问答工具，可直接用于 Agent。
+
+```typescript
+import { RAGQATool } from './src';
+
+const ragTool = new RAGQATool(ragPipeline);
+agent.addTool(ragTool);
+```
+
+### 配置选项
+
+| 选项 | 类型 | 说明 |
+|------|------|------|
+| embedding | object | 嵌入服务配置 |
+| vectorStore | object | 向量存储配置 |
+| retrieval | object | 检索参数 (topK, similarityThreshold) |
+| reranker | object | 重排序模型配置 |
 
 ## 配置
 

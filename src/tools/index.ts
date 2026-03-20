@@ -5,3 +5,5 @@ export { BaseTool } from './base';
 export { ToolRegistry } from './registry';
 export { CalculatorTool } from './calculator';
 export { SearchTool } from './search';
+export { MemoryTool, LongTermMemoryTool } from './memory-tool';
+export { RAGTool, RAGQATool } from './rag-tool';
