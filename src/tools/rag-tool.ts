@@ -1,21 +1,127 @@
 /**
  * RAG Tool - 检索增强工具
- * 为 Agent 提供知识问答能力
+   提供完整的 RAG 能力：
+    - 添加多格式文档（PDF、Office、图片、音频等）
+    - 智能检索与召回
+    - LLM 增强问答
+    - 知识库管理
+    - 支持 Qdrant 向量数据库
+    - 多管道/多命名空间支持
+    任意格式文档 → MarkItDown转换 → Markdown文本 → 智能分块 → 向量化 → 存储检索
+
  */
 
 import { BaseTool, ToolParameter } from './base';
 import { RAGPipeline, DocumentProcessor, TextDocumentLoader } from '../memory/rag/pipeline';
+import { SimpleVectorStore } from '../memory/types/vector-store';
+import { QdrantVectorStore, QdrantConfig } from '../memory/types/qdrant-store';
+
+export interface RAGToolConfig {
+  /** Qdrant 服务 URL */
+  qdrantUrl?: string;
+  /** Qdrant API Key */
+  qdrantApiKey?: string;
+  /** 集合名称 */
+  collectionName?: string;
+  /** 命名空间/管道名 */
+  namespace?: string;
+  /** 默认使用内存存储 */
+  useMemory?: boolean;
+}
 
 export class RAGTool extends BaseTool {
   name = 'rag';
-  description = '检索增强生成工具，基于知识库回答问题';
-  private ragPipeline: RAGPipeline;
-  private docProcessor: DocumentProcessor;
+  description = '检索增强生成工具，基于知识库回答问题，支持 Qdrant 向量数据库';
+  private pipelines: Map<string, RAGPipeline> = new Map();
+  private docProcessors: Map<string, DocumentProcessor> = new Map();
+  private defaultNamespace: string;
 
-  constructor(ragPipeline?: RAGPipeline) {
+  constructor(config: RAGToolConfig = {}) {
     super();
-    this.ragPipeline = ragPipeline || new RAGPipeline();
-    this.docProcessor = new DocumentProcessor(this.ragPipeline);
+    this.defaultNamespace = config.namespace || 'default';
+
+    // 初始化默认管道
+    this.createPipeline(config);
+  }
+
+  /**
+   * 创建 RAG 管道
+   */
+  private createPipeline(config: RAGToolConfig): void {
+    const namespace = config.namespace || 'default';
+
+    // 创建向量存储
+    let vectorStore: SimpleVectorStore | QdrantVectorStore;
+
+    if (config.qdrantUrl && !config.useMemory) {
+      // 使用 Qdrant
+      const qdrantConfig: QdrantConfig = {
+        url: config.qdrantUrl,
+        apiKey: config.qdrantApiKey,
+        collectionName: config.collectionName || 'rag_knowledge_base',
+      };
+      vectorStore = new QdrantVectorStore(qdrantConfig);
+      console.log(`📦 RAG 管道 [${namespace}]: 使用 Qdrant 向量数据库`);
+    } else {
+      // 使用内存存储
+      vectorStore = new SimpleVectorStore();
+      console.log(`📦 RAG 管道 [${namespace}]: 使用内存向量存储`);
+    }
+
+    const pipeline = new RAGPipeline(vectorStore as SimpleVectorStore);
+    const processor = new DocumentProcessor(pipeline);
+
+    this.pipelines.set(namespace, pipeline);
+    this.docProcessors.set(namespace, processor);
+  }
+
+  /**
+   * 获取当前命名空间
+   */
+  private getCurrentPipeline(): { pipeline: RAGPipeline; processor: DocumentProcessor } {
+    const pipeline = this.pipelines.get(this.defaultNamespace);
+    const processor = this.docProcessors.get(this.defaultNamespace);
+
+    if (!pipeline || !processor) {
+      throw new Error(`管道 ${this.defaultNamespace} 不存在`);
+    }
+
+    return { pipeline, processor };
+  }
+
+  /**
+   * 切换命名空间
+   */
+  useNamespace(namespace: string): void {
+    if (!this.pipelines.has(namespace)) {
+      // 自动创建新管道
+      this.createPipeline({
+        namespace,
+        qdrantUrl: undefined, // 新命名空间默认使用内存
+      });
+    }
+    this.defaultNamespace = namespace;
+  }
+
+  /**
+   * 创建新命名空间管道
+   */
+  createNamespace(config: RAGToolConfig & { namespace: string }): void {
+    this.createPipeline(config);
+  }
+
+  /**
+   * 获取所有命名空间
+   */
+  getNamespaces(): string[] {
+    return Array.from(this.pipelines.keys());
+  }
+
+  /**
+   * 获取 RAG 管道
+   */
+  getPipeline(namespace?: string): RAGPipeline | undefined {
+    return this.pipelines.get(namespace || this.defaultNamespace);
   }
 
   getParameters(): ToolParameter[] {
@@ -67,6 +173,9 @@ export class RAGTool extends BaseTool {
         case 'stats':
           return this.getStats();
 
+        case 'namespace':
+          return this.switchNamespace(params.query as string);
+
         default:
           return `❌ 未知操作: ${action}`;
       }
@@ -76,11 +185,23 @@ export class RAGTool extends BaseTool {
   }
 
   /**
+   * 切换命名空间
+   */
+  private switchNamespace(namespace: string): string {
+    if (!namespace) {
+      return `📂 当前命名空间: ${this.defaultNamespace}\n可用命名空间: ${this.getNamespaces().join(', ')}`;
+    }
+    this.useNamespace(namespace);
+    return `✅ 已切换到命名空间: ${namespace}`;
+  }
+
+  /**
    * 添加内容到知识库
    */
   private async addContent(content: string): Promise<string> {
-    const count = await this.docProcessor.loadText(content);
-    return `✅ 已添加 ${count} 个文档片段到知识库`;
+    const { processor } = this.getCurrentPipeline();
+    const count = await processor.loadText(content);
+    return `✅ 已添加 ${count} 个文档片段到知识库 [${this.defaultNamespace}]`;
   }
 
   /**
@@ -91,37 +212,33 @@ export class RAGTool extends BaseTool {
       return '❌ 请提供 source 参数（文件路径或 URL）';
     }
 
+    const { processor } = this.getCurrentPipeline();
     let count = 0;
 
     if (source.startsWith('http://') || source.startsWith('https://')) {
-      count = await this.docProcessor.loadURL(source);
+      count = await processor.loadURL(source);
     } else {
-      count = await this.docProcessor.loadFile(source);
+      count = await processor.loadFile(source);
     }
 
-    return `✅ 已从 ${source} 加载 ${count} 个文档`;
+    return `✅ 已从 ${source} 加载 ${count} 个文档 [${this.defaultNamespace}]`;
   }
 
   /**
    * 清空知识库
    */
   private clear(): string {
-    this.ragPipeline.clear();
-    return '✅ 知识库已清空';
+    const { pipeline } = this.getCurrentPipeline();
+    pipeline.clear();
+    return `✅ 知识库已清空 [${this.defaultNamespace}]`;
   }
 
   /**
    * 获取统计
    */
   private getStats(): string {
-    return `📚 知识库统计: ${this.ragPipeline.size()} 个文档`;
-  }
-
-  /**
-   * 获取 RAG 管道（供 Agent 使用）
-   */
-  getPipeline(): RAGPipeline {
-    return this.ragPipeline;
+    const { pipeline } = this.getCurrentPipeline();
+    return `📚 知识库统计 [${this.defaultNamespace}]: ${pipeline.size()} 个文档`;
   }
 }
 

@@ -6,4 +6,4 @@ export { ToolRegistry } from './registry';
 export { CalculatorTool } from './calculator';
 export { SearchTool } from './search';
 export { MemoryTool, LongTermMemoryTool } from './memory-tool';
-export { RAGTool, RAGQATool } from './rag-tool';
+export { RAGTool, RAGQATool, RAGToolConfig } from './rag-tool';

@@ -10,5 +10,12 @@ export {
   DocumentLoader,
   TextDocumentLoader,
   MarkdownLoader,
+  MarkItDownLoader,
   DocumentProcessor,
 } from './pipeline';
+
+export {
+  DocumentConverter,
+  convertToMarkdown,
+  ConvertResult,
+} from './converter';
