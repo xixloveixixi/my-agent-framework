@@ -242,15 +242,14 @@ export class PerceptualMemory implements BaseMemory {
     }
 
     // 融合排序：向量相似度 + 时间近因性 + 重要性权重
-    const now = Date.now();
     const scoredResults: ScoredMemoryItem[] = [];
 
     for (const hit of allHits) {
       const timestamp = hit.item.timestamp;
-      const recencyScore = this.calculateRecencyScore(timestamp, now);
+      const recencyScore = this.calculateRecencyScore(timestamp);
       const importance = (hit.item.metadata?.importance as number) || 0.5;
 
-      // 评分算法: combinedScore = (vector_score * vectorWeight + recencyScore * recencyWeight) * importanceWeight
+      // 评分公式: (向量相似度 × 0.8 + 时间近因性 × 0.2) × (0.8 + 重要性 × 0.4)
       const baseRelevance = hit.vectorScore * vectorWeight + recencyScore * recencyWeight;
       const importanceWeightCalc = 0.8 + (importance * 0.4);
       const combinedScore = baseRelevance * importanceWeightCalc;
@@ -292,11 +291,21 @@ export class PerceptualMemory implements BaseMemory {
 
   /**
    * 计算时间近因性分数
-   * 越近的记忆分数越高，遵循指数衰减
+   * 指数衰减模型：24小时内保持高分，之后逐渐衰减
+   * @param timestamp 时间戳（毫秒）
+   * @returns 分数范围 [0.1, 1.0]
    */
-  private calculateRecencyScore(timestamp: number, now: number, halfLife: number = 86400000): number {
-    const age = now - timestamp; // 毫秒
-    return Math.exp(-age / halfLife); // 指数衰减，半衰期默认为1天
+  private calculateRecencyScore(timestamp: number): number {
+    const now = Date.now();
+    const ageHours = (now - timestamp) / 3600000; // 转换为小时
+
+    // 衰减系数
+    const decayFactor = 0.1;
+    // 指数衰减：exp(-decay_factor * age_hours / 24)
+    const recencyScore = Math.exp(-decayFactor * ageHours / 24);
+
+    // 最低保持 0.1 的基础分数
+    return Math.max(0.1, recencyScore);
   }
 
   /**
