@@ -33,6 +33,34 @@ export interface PerceptualData {
 }
 
 /**
+ * 感知记忆检索选项
+ */
+export interface PerceptualRetrieveOptions {
+  /** 用户ID */
+  userId?: string;
+  /** 目标模态过滤（如只搜索图像） */
+  targetModality?: PerceptualDataType;
+  /** 查询模态（用于跨模态检索，如用文本查图像） */
+  queryModality?: PerceptualDataType;
+  /** 重要性权重 */
+  importanceWeight?: number;
+  /** 时间近因性权重 */
+  recencyWeight?: number;
+  /** 向量相似度权重 */
+  vectorWeight?: number;
+}
+
+/**
+ * 检索结果项（带评分）
+ */
+export interface ScoredMemoryItem extends MemoryItem {
+  vectorScore: number;
+  recencyScore: number;
+  importance: number;
+  combinedScore: number;
+}
+
+/**
  * 感知记忆 - 多模态数据存储
  * 支持按模态分离的向量存储
  */
@@ -148,6 +176,153 @@ export class PerceptualMemory implements BaseMemory {
         metadata: data?.metadata,
       };
     });
+  }
+
+  /**
+   * 检索感知记忆（支持跨模态查询 + 融合排序）
+   * @param query 查询文本
+   * @param limit 返回数量限制
+   * @param options 检索选项
+   */
+  async retrieve(
+    query: string,
+    limit: number = 5,
+    options?: PerceptualRetrieveOptions
+  ): Promise<ScoredMemoryItem[]> {
+    const {
+      userId,
+      targetModality,
+      queryModality = targetModality || 'text',
+      importanceWeight = 0.4,
+      recencyWeight = 0.2,
+      vectorWeight = 0.8,
+    } = options || {};
+
+    // 确定要搜索的目标模态
+    const searchTypes = targetModality
+      ? [targetModality]
+      : Array.from(this.vectorStores.keys());
+
+    // 扩展候选池（因为融合后可能过滤掉一些）
+    const candidateLimit = Math.max(limit * 5, 20);
+
+    // 同模态向量检索
+    const allHits: Array<{ item: MemoryItem; modality: PerceptualDataType; vectorScore: number }> = [];
+
+    for (const targetType of searchTypes) {
+      const store = this.getVectorStore(targetType);
+
+      // 获取查询向量（如果实现了多模态embedding，这里可以用queryModality）
+      // 当前简化版：直接用文本搜索
+      const results = store.search(query, candidateLimit);
+
+      // 转换为同步结果
+      const syncResults = results instanceof Promise ? await results : results;
+
+      for (const item of syncResults) {
+        // 过滤用户ID
+        if (userId && item.metadata?.userId !== userId) {
+          continue;
+        }
+
+        // 计算向量相似度分数（简化为随机或基于内容匹配）
+        const vectorScore = this.calculateVectorScore(query, item.content);
+
+        allHits.push({
+          item: {
+            id: item.id,
+            content: item.content,
+            timestamp: (item.metadata?.timestamp as number) || Date.now(),
+            metadata: item.metadata,
+          },
+          modality: targetType,
+          vectorScore,
+        });
+      }
+    }
+
+    // 融合排序：向量相似度 + 时间近因性 + 重要性权重
+    const now = Date.now();
+    const scoredResults: ScoredMemoryItem[] = [];
+
+    for (const hit of allHits) {
+      const timestamp = hit.item.timestamp;
+      const recencyScore = this.calculateRecencyScore(timestamp, now);
+      const importance = (hit.item.metadata?.importance as number) || 0.5;
+
+      // 评分算法: combinedScore = (vector_score * vectorWeight + recencyScore * recencyWeight) * importanceWeight
+      const baseRelevance = hit.vectorScore * vectorWeight + recencyScore * recencyWeight;
+      const importanceWeightCalc = 0.8 + (importance * 0.4);
+      const combinedScore = baseRelevance * importanceWeightCalc;
+
+      scoredResults.push({
+        ...hit.item,
+        vectorScore: hit.vectorScore,
+        recencyScore,
+        importance,
+        combinedScore,
+      });
+    }
+
+    // 按综合分数排序
+    scoredResults.sort((a, b) => b.combinedScore - a.combinedScore);
+
+    return scoredResults.slice(0, limit);
+  }
+
+  /**
+   * 计算向量相似度分数（简化版）
+   * 实际生产中应使用真实的embedding向量比较
+   */
+  private calculateVectorScore(query: string, content: string): number {
+    // 简单的关键词匹配作为相似度代理
+    const queryWords = query.toLowerCase().split(/\s+/);
+    const contentWords = content.toLowerCase().split(/\s+/);
+
+    let matches = 0;
+    for (const word of queryWords) {
+      if (contentWords.some(c => c.includes(word) || word.includes(c))) {
+        matches++;
+      }
+    }
+
+    // 返回0-1之间的分数
+    return queryWords.length > 0 ? matches / queryWords.length : 0;
+  }
+
+  /**
+   * 计算时间近因性分数
+   * 越近的记忆分数越高，遵循指数衰减
+   */
+  private calculateRecencyScore(timestamp: number, now: number, halfLife: number = 86400000): number {
+    const age = now - timestamp; // 毫秒
+    return Math.exp(-age / halfLife); // 指数衰减，半衰期默认为1天
+  }
+
+  /**
+   * 跨模态检索
+   * 用文本查询其他模态（如查询图像：用文本描述匹配图像）
+   * @param query 文本查询
+   * @param targetModality 目标模态
+   * @param limit 返回数量
+   */
+  async retrieveCrossModal(
+    query: string,
+    targetModality: PerceptualDataType,
+    limit: number = 5
+  ): Promise<ScoredMemoryItem[]> {
+    return this.retrieve(query, limit, {
+      targetModality,
+      queryModality: 'text', // 使用文本作为查询模态
+    });
+  }
+
+  /**
+   * 获取指定模态的向量存储
+   * 用于外部调用（如需要直接操作向量存储）
+   */
+  getVectorStoreByModality(type: PerceptualDataType): SimpleVectorStore {
+    return this.getVectorStore(type);
   }
 
   /**
