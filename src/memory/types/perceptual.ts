@@ -1,7 +1,7 @@
 /**
  * Perceptual Memory - 感知记忆
  * 多模态记忆，支持文本、图像、视频等感知数据
- * 支持统一存储或本地存储
+ * 支持按模态分离的向量存储
  */
 
 import { BaseMemory, MemoryItem, MemoryConfig } from '../base';
@@ -9,6 +9,18 @@ import { SimpleVectorStore } from './vector-store';
 import { IMemoryStore } from '../store';
 
 export type PerceptualDataType = 'text' | 'image' | 'audio' | 'video' | 'image_url';
+
+/**
+ * 模态向量维度配置
+ * 不同模态使用不同维度的向量
+ */
+export const MODAL_VECTOR_DIMS: Record<PerceptualDataType, number> = {
+  text: 1536,        // 文本：常用 OpenAI embedding 维度
+  image: 512,         // 图像：常用 CLIP 维度
+  audio: 512,        // 音频：常用音频embedding维度
+  video: 512,        // 视频：常用视频embedding维度
+  image_url: 512,    // URL图像：同图像维度
+};
 
 export interface PerceptualData {
   id: string;
@@ -22,26 +34,45 @@ export interface PerceptualData {
 
 /**
  * 感知记忆 - 多模态数据存储
+ * 支持按模态分离的向量存储
  */
 export class PerceptualMemory implements BaseMemory {
   private data: Map<string, PerceptualData> = new Map();
-  private vectorStore: SimpleVectorStore;
+  // 按模态分离的向量存储
+  private vectorStores: Map<PerceptualDataType, SimpleVectorStore> = new Map();
   private store?: IMemoryStore;
   private maxSize: number;
   private useExternalStore: boolean;
+  // 各模态的最大容量
+  private maxSizePerType: Map<PerceptualDataType, number> = new Map();
 
   constructor(
     config?: MemoryConfig,
     store?: IMemoryStore
   ) {
     this.maxSize = config?.maxSize || 2000;
-    this.vectorStore = new SimpleVectorStore();
     this.store = store;
     this.useExternalStore = !!store;
+
+    // 初始化各模态的向量存储
+    const types: PerceptualDataType[] = ['text', 'image', 'audio', 'video', 'image_url'];
+    types.forEach(type => {
+      this.vectorStores.set(type, new SimpleVectorStore());
+      // 每个模态默认最大容量
+      this.maxSizePerType.set(type, Math.floor(this.maxSize / types.length));
+    });
 
     if (this.useExternalStore) {
       console.log('📦 Perceptual Memory 使用外部存储');
     }
+    console.log('🖼️ Perceptual Memory 使用模态分离向量存储');
+  }
+
+  /**
+   * 获取指定模态的向量存储
+   */
+  private getVectorStore(type: PerceptualDataType): SimpleVectorStore {
+    return this.vectorStores.get(type) || this.vectorStores.get('text')!;
   }
 
   /**
@@ -70,31 +101,45 @@ export class PerceptualMemory implements BaseMemory {
     } else {
       this.data.set(item.id, item);
 
-      this.vectorStore.add({
+      // 添加到对应模态的向量存储
+      this.getVectorStore(type).add({
         id: item.id,
         content: this.getSearchableContent(item),
         metadata: { type, timestamp: item.timestamp },
       });
 
-      if (this.data.size > this.maxSize) {
-        const oldest = this.getOldestId();
-        if (oldest) {
-          this.data.delete(oldest);
-        }
+      // 超过容量时触发遗忘
+      if (this.getSizeByType(type) > (this.maxSizePerType.get(type) || this.maxSize)) {
+        this.evictOldestByType(type);
       }
     }
   }
 
   /**
    * 搜索感知记忆
+   * @param query 查询文本
+   * @param limit 返回数量限制
+   * @param types 可选的模态过滤，不指定则搜索所有模态
    */
-  async search(query: string, limit: number = 10): Promise<MemoryItem[]> {
+  async search(query: string, limit: number = 10, types?: PerceptualDataType[]): Promise<MemoryItem[]> {
     if (this.useExternalStore && this.store) {
       return this.store.search('perceptual', query, limit);
     }
 
-    const results = this.vectorStore.search(query, limit);
-    return results.map(item => {
+    // 确定要搜索的模态
+    const searchTypes = types || Array.from(this.vectorStores.keys());
+
+    // 并行搜索各模态的向量存储
+    const searchPromises = searchTypes.map(async (type) => {
+      const store = this.getVectorStore(type);
+      return store.search(query, limit);
+    });
+
+    const allResults = await Promise.all(searchPromises);
+    const flatResults = allResults.flat();
+
+    // 按相关性排序并返回
+    return flatResults.slice(0, limit).map(item => {
       const data = this.data.get(item.id);
       return {
         id: item.id,
@@ -125,13 +170,26 @@ export class PerceptualMemory implements BaseMemory {
 
   /**
    * 清空感知记忆
+   * @param type 可选，指定要清空的模态，不指定则清空所有
    */
-  async clear(): Promise<void> {
+  async clear(type?: PerceptualDataType): Promise<void> {
     if (this.useExternalStore && this.store) {
       await this.store.clear('perceptual');
     } else {
-      this.data.clear();
-      this.vectorStore.clear();
+      if (type) {
+        // 清空指定模态
+        this.getVectorStore(type).clear();
+        // 同时清理该模态的数据
+        for (const [id, data] of this.data.entries()) {
+          if (data.type === type) {
+            this.data.delete(id);
+          }
+        }
+      } else {
+        // 清空所有
+        this.data.clear();
+        this.vectorStores.forEach(store => store.clear());
+      }
     }
   }
 
@@ -318,20 +376,67 @@ export class PerceptualMemory implements BaseMemory {
     if (this.useExternalStore && this.store) {
       return this.store.delete('perceptual', id);
     }
-    return this.data.delete(id);
+
+    const data = this.data.get(id);
+    if (data) {
+      // 从对应模态的向量存储中删除
+      this.getVectorStore(data.type).delete(id);
+      return this.data.delete(id);
+    }
+    return false;
   }
 
-  private getOldestId(): string | null {
-    let oldestId: string | null = null;
-    let oldestTime = Infinity;
+  /**
+   * 获取指定模态的记忆数量
+   */
+  private getSizeByType(type: PerceptualDataType): number {
+    return this.getVectorStore(type).size();
+  }
 
-    this.data.forEach((d, id) => {
-      if (d.timestamp < oldestTime) {
-        oldestTime = d.timestamp;
-        oldestId = id;
-      }
+  /**
+   * 驱逐指定模态的最旧记忆
+   */
+  private evictOldestByType(type: PerceptualDataType): void {
+    const store = this.getVectorStore(type);
+    const items = store.getAll();
+
+    if (items.length > 0) {
+      // 按时间排序，最旧的在前
+      items.sort((a, b) => {
+        const timeA = (a.metadata?.timestamp as number) || 0;
+        const timeB = (b.metadata?.timestamp as number) || 0;
+        return timeA - timeB;
+      });
+
+      // 删除最旧的
+      const oldest = items[0];
+      store.delete(oldest.id);
+      this.data.delete(oldest.id);
+    }
+  }
+
+  /**
+   * 获取指定模态的向量维度
+   */
+  getVectorDim(type: PerceptualDataType): number {
+    return MODAL_VECTOR_DIMS[type] || MODAL_VECTOR_DIMS.text;
+  }
+
+  /**
+   * 获取所有模态类型
+   */
+  getModalities(): PerceptualDataType[] {
+    return Array.from(this.vectorStores.keys());
+  }
+
+  /**
+   * 按模态获取记忆数量
+   */
+  getSizeByModalities(): Record<PerceptualDataType, number> {
+    const result: Record<string, number> = {};
+    this.vectorStores.forEach((store, type) => {
+      result[type] = store.size();
     });
-
-    return oldestId;
+    return result as Record<PerceptualDataType, number>;
   }
 }
