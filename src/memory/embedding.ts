@@ -81,7 +81,7 @@ export class EmbeddingManager {
 /**
  * DashScope 嵌入服务（阿里云）
  */
-class DashScopeEmbedding implements EmbeddingService {
+export class DashScopeEmbedding implements EmbeddingService {
   private apiKey: string;
   private model: string;
 
@@ -150,7 +150,7 @@ class DashScopeEmbedding implements EmbeddingService {
 /**
  * OpenAI 嵌入服务
  */
-class OpenAIEmbedding implements EmbeddingService {
+export class OpenAIEmbedding implements EmbeddingService {
   private apiKey: string;
   private model: string;
 

@@ -6,6 +6,7 @@
 import { SimpleVectorStore, VectorItem } from '../types/vector-store';
 import { QdrantVectorStore } from '../types/qdrant-store';
 import { DocumentConverter } from './converter';
+import { DashScopeEmbedding, OpenAIEmbedding } from '../embedding';
 
 /**
  * 统一的向量存储接口
@@ -13,7 +14,7 @@ import { DocumentConverter } from './converter';
 export interface VectorStore {
   add(item: VectorItem): void | Promise<void>;
   addBatch(items: VectorItem[]): void | Promise<void>;
-  search(query: string, topK: number): VectorItem[] | Promise<VectorItem[]>;
+  search(query: string, topK: number, queryEmbedding?: number[]): VectorItem[] | Promise<VectorItem[]>;
   searchByKeywords(keywords: string[], topK: number): VectorItem[];
   getAll(): VectorItem[] | Promise<VectorItem[]>;
   get(id: string): VectorItem | undefined;
@@ -35,6 +36,10 @@ export interface RAGConfig {
   hydeEnabled?: boolean;
   /** 候选池乘数（扩展检索时） */
   candidatePoolMultiplier?: number;
+  /** 嵌入服务配置 */
+  embeddingApiKey?: string;
+  embeddingModel?: string;
+  embeddingProvider?: 'dashscope' | 'openai';
 }
 
 export interface RAGDocument {
@@ -55,6 +60,7 @@ export interface RAGResult {
 export class RAGPipeline {
   private vectorStore: VectorStore;
   private config: RAGConfig;
+  private embeddingService: DashScopeEmbedding | OpenAIEmbedding | null = null;
 
   constructor(vectorStore?: VectorStore, config?: RAGConfig) {
     this.vectorStore = vectorStore || new SimpleVectorStore();
@@ -67,7 +73,34 @@ export class RAGPipeline {
       mqeCount: config?.mqeCount || 3,
       hydeEnabled: config?.hydeEnabled ?? false,
       candidatePoolMultiplier: config?.candidatePoolMultiplier || 4,
+      embeddingApiKey: config?.embeddingApiKey,
+      embeddingModel: config?.embeddingModel,
+      embeddingProvider: config?.embeddingProvider,
     };
+
+    // 初始化嵌入服务
+    if (config?.embeddingProvider && config.embeddingApiKey) {
+      if (config.embeddingProvider === 'dashscope') {
+        this.embeddingService = new DashScopeEmbedding(
+          config.embeddingApiKey,
+          config.embeddingModel || 'text-embedding-v2'
+        );
+        console.log('✅ 已启用 DashScope 嵌入服务');
+      } else if (config.embeddingProvider === 'openai') {
+        this.embeddingService = new OpenAIEmbedding(
+          config.embeddingApiKey,
+          config.embeddingModel || 'text-embedding-3-small'
+        );
+        console.log('✅ 已启用 OpenAI 嵌入服务');
+      }
+    }
+  }
+
+  /**
+   * 获取嵌入服务
+   */
+  getEmbeddingService() {
+    return this.embeddingService;
   }
 
   /**
@@ -87,6 +120,41 @@ export class RAGPipeline {
 
   /**
    * 批量添加文档
+   */
+  async addDocumentsAsync(docs: RAGDocument[]): Promise<void> {
+    // 如果有嵌入服务，先批量生成嵌入向量
+    if (this.embeddingService) {
+      console.log(`📚 正在生成 ${docs.length} 个文档的嵌入向量...`);
+      const contents = docs.map(d => d.content);
+      const embeddings = await this.embeddingService.embedBatch(contents);
+
+      const items = docs.map((doc, i) => ({
+        id: doc.id,
+        content: doc.content,
+        embedding: embeddings[i],
+        metadata: { source: doc.source, ...doc.metadata },
+      }));
+
+      const result = this.vectorStore.addBatch(items);
+      if (result instanceof Promise) {
+        await result;
+      }
+      console.log('✅ 嵌入向量已生成并存储');
+    } else {
+      // 使用原来的方式（TF-IDF）
+      const result = this.vectorStore.addBatch(docs.map(doc => ({
+        id: doc.id,
+        content: doc.content,
+        metadata: { source: doc.source, ...doc.metadata },
+      })));
+      if (result instanceof Promise) {
+        result.catch(console.error);
+      }
+    }
+  }
+
+  /**
+   * 批量添加文档（同步版本，无嵌入）
    */
   addDocuments(docs: RAGDocument[]): void {
     const result = this.vectorStore.addBatch(docs.map(doc => ({
@@ -124,8 +192,20 @@ export class RAGPipeline {
    * 异步检索相关文档
    */
   async retrieveAsync(query: string): Promise<RAGDocument[]> {
-    const results = await this.vectorStore.search(query, this.config.topK!) as VectorItem[];
+    // 如果有嵌入服务，使用嵌入向量检索
+    if (this.embeddingService) {
+      const queryEmbedding = await this.embeddingService.embed(query);
+      const results = await this.vectorStore.search(query, this.config.topK!, queryEmbedding) as VectorItem[];
+      return results.map(item => ({
+        id: item.id,
+        content: item.content,
+        source: item.metadata?.source as string,
+        metadata: item.metadata,
+      }));
+    }
 
+    // 否则使用 TF-IDF 检索
+    const results = await this.vectorStore.search(query, this.config.topK!) as VectorItem[];
     return results.map(item => ({
       id: item.id,
       content: item.content,
@@ -688,9 +768,10 @@ export class MarkdownLoader implements DocumentLoader {
  */
 export class MarkItDownLoader implements DocumentLoader {
   private converter: DocumentConverter | null = null;
+  private initPromise: Promise<void> | null = null;
 
   constructor() {
-    this.initConverter();
+    this.initPromise = this.initConverter();
   }
 
   private async initConverter(): Promise<void> {
@@ -701,6 +782,20 @@ export class MarkItDownLoader implements DocumentLoader {
     } catch (error) {
       console.warn(`⚠️ 文档转换器初始化失败: ${error}`);
     }
+  }
+
+  /**
+   * 确保转换器已初始化
+   */
+  private async ensureConverter(): Promise<DocumentConverter | null> {
+    if (this.converter) {
+      return this.converter;
+    }
+    // 等待初始化完成
+    if (this.initPromise) {
+      await this.initPromise;
+    }
+    return this.converter;
   }
 
   async load(source: string): Promise<RAGDocument[]> {
@@ -717,21 +812,33 @@ export class MarkItDownLoader implements DocumentLoader {
       const fs = await import('fs/promises');
       await fs.access(source); // 检查文件是否存在
 
+      // 确保转换器已初始化
+      const converter = await this.ensureConverter();
+
       // 使用文档转换器
-      if (this.converter) {
-        const result = await this.converter.convert(source);
+      if (converter) {
+        const result = await converter.convert(source);
         if (result.success && result.content) {
           console.log(`📄 文档转换成功: ${source} (${result.format})`);
           return this.parseMarkdownWithHeadings(result.content, source);
+        } else if (!result.success) {
+          // 转换失败，抛出错误而不是回退
+          throw new Error(result.error || '文档转换失败');
         }
       }
 
-      // 回退到直接读取
-      const content = await fs.readFile(source, 'utf-8');
-      return this.parseMarkdownWithHeadings(content, source);
+      // 回退到直接读取（仅对纯文本文件）
+      const ext = source.toLowerCase().split('.').pop();
+      if (['txt', 'md', 'markdown', 'json', 'xml', 'csv'].includes(ext || '')) {
+        const content = await fs.readFile(source, 'utf-8');
+        return this.parseMarkdownWithHeadings(content, source);
+      }
+
+      // 其他格式转换失败，抛出错误
+      throw new Error(`不支持的文件格式或文档无法解析: .${ext}`);
     } catch (error) {
-      console.warn(`⚠️ 文件加载失败: ${error}`);
-      return this.parseMarkdownWithHeadings(source, 'text');
+      console.error(`❌ 文件加载失败: ${error}`);
+      throw error; // 重新抛出错误，让上层处理
     }
   }
 

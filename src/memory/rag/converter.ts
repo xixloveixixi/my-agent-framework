@@ -128,21 +128,44 @@ export class DocumentConverter {
    */
   private async convertPDF(filePath: string): Promise<ConvertResult> {
     try {
-      const pdfParse = require('pdf-parse') as PDFParser;
+      // pdf-parse v2.x 导出方式
+      const { PDFParse } = require('pdf-parse');
       const dataBuffer = await fs.readFile(filePath);
-      const data = await pdfParse(dataBuffer);
+      const parser = new PDFParse({ data: dataBuffer });
+      const data = await parser.getText();
+
+      // 检查是否成功提取到文本
+      const textContent = data.text?.trim() || '';
+
+      // 检查是否返回了 PDF 原始二进制数据（而非提取的文本）
+      const isBinaryContent = textContent.startsWith('%PDF') ||
+                              textContent.includes('%%EOF') ||
+                              /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(textContent.slice(0, 1000));
+
+      if (textContent.length < 10 || isBinaryContent) {
+        console.warn(`⚠️ PDF 可能为扫描版或图片型: ${path.basename(filePath)}`);
+        return {
+          content: '',
+          format: 'pdf',
+          success: false,
+          error: 'PDF 文件可能是扫描版或图片型，无法直接提取文本。请将 PDF 转换为文字版后重新上传。',
+        };
+      }
+
+      console.log(`📄 PDF解析结果: ${textContent.length} 字符, ${data.pages?.length || 0} 页`);
 
       return {
-        content: `# ${path.basename(filePath)}\n\n${data.text}`,
+        content: `# ${path.basename(filePath)}\n\n${textContent}`,
         format: 'pdf',
         success: true,
       };
     } catch (error) {
+      console.error(`❌ PDF解析失败: ${error}`);
       return {
         content: '',
         format: 'pdf',
         success: false,
-        error: (error as Error).message,
+        error: `PDF 解析失败: ${(error as Error).message}`,
       };
     }
   }

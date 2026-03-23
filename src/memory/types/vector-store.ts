@@ -20,6 +20,8 @@ export class SimpleVectorStore {
   private vocabulary: Map<string, number> = new Map();
   private idf: Map<string, number> = new Map();
   private documentCount: number = 0;
+  // 存储预计算的嵌入向量
+  private embeddings: Map<string, number[]> = new Map();
 
   /**
    * 添加向量项
@@ -28,7 +30,13 @@ export class SimpleVectorStore {
     this.items.set(item.id, item);
     this.documentCount++;
 
-    // 更新词汇表和 IDF
+    // 如果有预计算的嵌入向量，保存起来
+    if (item.embedding && item.embedding.length > 0) {
+      this.embeddings.set(item.id, item.embedding);
+      return; // 不需要计算 TF-IDF
+    }
+
+    // 更新词汇表和 IDF（用于 TF-IDF 搜索）
     const words = this.tokenize(item.content.toString());
     const uniqueWords = new Set(words);
 
@@ -45,6 +53,13 @@ export class SimpleVectorStore {
   }
 
   /**
+   * 检查是否使用预计算嵌入
+   */
+  hasEmbeddings(): boolean {
+    return this.embeddings.size > 0;
+  }
+
+  /**
    * 批量添加
    */
   addBatch(items: VectorItem[]): void {
@@ -54,15 +69,21 @@ export class SimpleVectorStore {
   /**
    * 语义搜索（返回带分数的结果）
    */
-  searchWithScores(query: string, topK: number = 5): SearchResult[] {
+  searchWithScores(query: string, topK: number = 5, queryEmbedding?: number[]): SearchResult[] {
     if (this.items.size === 0) {
       return [];
     }
 
+    // 如果有预计算嵌入且提供了查询嵌入，使用向量相似度
+    if (this.hasEmbeddings() && queryEmbedding && queryEmbedding.length > 0) {
+      return this.searchByEmbeddingScores(queryEmbedding, topK);
+    }
+
+    // 否则使用 TF-IDF
     const queryVector = this.computeTFIDF(query);
     const results: SearchResult[] = [];
 
-    this.items.forEach((item, id) => {
+    this.items.forEach((item) => {
       const itemVector = this.computeTFIDF(item.content.toString());
       const score = this.cosineSimilarity(queryVector, itemVector);
       results.push({ item, score });
@@ -75,10 +96,28 @@ export class SimpleVectorStore {
   }
 
   /**
+   * 使用嵌入向量搜索
+   */
+  private searchByEmbeddingScores(queryEmbedding: number[], topK: number): SearchResult[] {
+    const results: SearchResult[] = [];
+
+    this.items.forEach((item) => {
+      const itemEmbedding = this.embeddings.get(item.id);
+      if (itemEmbedding) {
+        const score = this.cosineSimilarity(queryEmbedding, itemEmbedding);
+        results.push({ item, score });
+      }
+    });
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, topK);
+  }
+
+  /**
    * 语义搜索（返回向量项）
    */
-  search(query: string, topK: number = 5): VectorItem[] {
-    return this.searchWithScores(query, topK).map(r => r.item);
+  search(query: string, topK: number = 5, queryEmbedding?: number[]): VectorItem[] {
+    return this.searchWithScores(query, topK, queryEmbedding).map(r => r.item);
   }
 
   /**
