@@ -4,8 +4,8 @@
 
 ## 特性
 
-- **多种 Agent 模式**: 支持 SimpleAgent、ReActAgent、PlanAndSolveAgent、ReflectionAgent、ContextAwareAgent
-- **工具调用**: 内置计算器、搜索等工具，支持自定义工具扩展
+- **多种 Agent 模式**: 支持 SimpleAgent、ReActAgent、PlanAndSolveAgent、ReflectionAgent、ContextAwareAgent、ProjectAssistant
+- **工具调用**: 内置计算器、搜索、记忆、RAG、笔记等工具，支持自定义工具扩展
 - **流式响应**: 支持流式输出，提升用户体验
 - **对话历史**: 自动管理对话上下文，支持历史记录配置
 - **类型安全**: 完整的 TypeScript 类型定义
@@ -61,6 +61,7 @@ src/
 │   ├── plan-solve-agent.ts  # 计划执行 Agent
 │   ├── reflection-agent.ts  # 反思 Agent
 │   ├── context-aware-agent.ts  # 上下文感知 Agent
+│   ├── project-assistant.ts  # 项目助手
 │   └── index.ts          # Agents 导出
 │
 ├── tools/                # 工具模块
@@ -69,6 +70,7 @@ src/
 │   ├── search.ts         # 搜索工具
 │   ├── memory-tool.ts    # 记忆工具
 │   ├── rag-tool.ts       # RAG 工具
+│   ├── note-tool.ts      # 笔记工具
 │   ├── registry.ts       # 工具注册表
 │   └── index.ts          # 工具导出
 │
@@ -421,6 +423,51 @@ const knowledge = await agent.searchKnowledge('Pandas 优化');
 - **自动记忆**: 对话自动记录到记忆系统
 - **动态配置**: 运行时更新上下文配置
 
+### ProjectAssistant
+
+长期项目助手，集成 NoteTool 和 ContextBuilder，提供项目生命周期管理。
+
+```typescript
+import { ProjectAssistant } from './src';
+
+// 创建项目助手
+const assistant = new ProjectAssistant('项目助手', {
+  projectName: 'my_project',
+  noteLimit: 3,
+  autoNote: true,
+  toolConfig: {
+    notePath: './project_notes',
+  },
+});
+
+// 聊天（自动检索相关笔记 + 构建上下文）
+const response = await assistant.chat('我们完成了第一阶段重构...');
+
+// 手动操作笔记
+await assistant.createNote('API 设计', '## 设计规范', 'reference');
+await assistant.searchNotes('重构');
+await assistant.listNotes('blocker');
+await assistant.getSummary();
+```
+
+#### ProjectAssistant 功能
+
+- **自动笔记检索**: 聊天时自动检索相关笔记
+- **智能上下文构建**: 整合笔记、记忆、RAG 构建优化上下文
+- **自动保存**: 根据内容自动判断笔记类型保存
+- **项目管理**: 支持任务状态、阻碍、行动项等分类
+
+#### 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| projectName | string | - | 项目名称 |
+| maxContextTokens | number | 4000 | 最大上下文 token 数 |
+| noteLimit | number | 3 | 每次检索的笔记数量 |
+| autoNote | boolean | true | 是否自动保存对话为笔记 |
+| toolConfig.notePath | string | ./${projectName}_notes | 笔记存储路径 |
+| toolConfig.ragPath | string | - | RAG 知识库路径 |
+
 ## 工具
 
 ### CalculatorTool
@@ -606,6 +653,63 @@ agent.addTool(memoryTool);
 | query | string | 搜索关键词 |
 | memory_type | string | 记忆类型 |
 | importance | number | 重要性 (0-1) |
+
+### NoteTool
+
+笔记管理工具，提供笔记的完整生命周期管理。
+
+```typescript
+import { NoteTool } from './src';
+
+const notes = new NoteTool('./project_notes');
+
+// 创建笔记
+const noteId = await notes.execute({
+  action: 'create',
+  title: '重构项目 - 第一阶段',
+  content: '## 完成情况\n已完成数据模型层重构',
+  note_type: 'task_state',
+  tags: ['refactoring', 'phase1']
+});
+
+// 搜索笔记
+const results = await notes.execute({
+  action: 'search',
+  query: '重构'
+});
+
+// 列出笔记
+const list = await notes.execute({
+  action: 'list',
+  note_type: 'blocker'
+});
+
+// 获取摘要
+const summary = await notes.execute({ action: 'summary' });
+```
+
+#### NoteTool 操作
+
+| 操作 | 说明 | 主要参数 |
+|------|------|----------|
+| create | 创建笔记 | title, content, note_type, tags |
+| read | 读取笔记 | note_id |
+| update | 更新笔记 | note_id, title, content |
+| search | 搜索笔记 | query, note_type, tags |
+| list | 列出笔记 | note_type, tags, limit |
+| summary | 笔记统计 | - |
+| delete | 删除笔记 | note_id |
+
+#### 笔记类型
+
+| 类型 | 说明 |
+|------|------|
+| task_state | 任务状态 |
+| conclusion | 结论 |
+| blocker | 阻碍/问题 |
+| action | 行动项 |
+| reference | 参考资料 |
+| general | 通用 |
 
 ### 存储后端
 

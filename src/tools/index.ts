@@ -7,3 +7,5 @@ export { CalculatorTool } from './calculator';
 export { SearchTool } from './search';
 export { MemoryTool, LongTermMemoryTool } from './memory-tool';
 export { RAGTool, RAGQATool, RAGToolConfig } from './rag-tool';
+export { NoteTool } from './note-tool';
+export type { NoteMetadata, NoteType, NoteResult } from './note-tool';

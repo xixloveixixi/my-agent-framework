@@ -8,3 +8,5 @@ export { PlanAndSolveAgent } from './plan-solve-agent';
 export { ReflectionAgent } from './reflection-agent';
 export { ContextAwareAgent } from './context-aware-agent';
 export type { ContextAwareAgentConfig } from './context-aware-agent';
+export { ProjectAssistant } from './project-assistant';
+export type { ProjectAssistantConfig } from './project-assistant';
