@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **多种 Agent 模式**: 支持 SimpleAgent、ReActAgent、PlanAndSolveAgent、ReflectionAgent
+- **多种 Agent 模式**: 支持 SimpleAgent、ReActAgent、PlanAndSolveAgent、ReflectionAgent、ContextAwareAgent
 - **工具调用**: 内置计算器、搜索等工具，支持自定义工具扩展
 - **流式响应**: 支持流式输出，提升用户体验
 - **对话历史**: 自动管理对话上下文，支持历史记录配置
@@ -60,6 +60,7 @@ src/
 │   ├── react-agent.ts   # ReAct Agent
 │   ├── plan-solve-agent.ts  # 计划执行 Agent
 │   ├── reflection-agent.ts  # 反思 Agent
+│   ├── context-aware-agent.ts  # 上下文感知 Agent
 │   └── index.ts          # Agents 导出
 │
 ├── tools/                # 工具模块
@@ -89,6 +90,10 @@ src/
 │   └── rag/              # RAG 实现
 │       └── pipeline.ts
 │
+├── context/              # 上下文工程模块
+│   ├── types.ts          # 类型定义
+│   ├── builder.ts        # ContextBuilder 实现
+│   └── index.ts          # 模块导出
 ├── types/                # 类型定义
 │   └── index.ts
 │
@@ -98,6 +103,96 @@ src/
 │
 └── index.ts             # 主入口
 ```
+
+## 上下文工程
+
+HelloAgents 提供了完整的上下文工程模块 (ContextBuilder)，实现 GSSC (Gather-Select-Structure-Compress) 流水线。
+
+### 核心概念
+
+#### ContextPacket
+候选信息包，系统中信息的基本单元。
+
+```typescript
+interface ContextPacket {
+  content: string;        // 信息内容
+  timestamp: Date;        // 时间戳
+  tokenCount: number;     // Token 数量
+  relevanceScore: number; // 相关性分数 (0.0-1.0)
+  metadata?: Record<string, unknown>;
+  source?: 'memory' | 'conversation' | 'system' | 'tool';
+  priority?: number;
+}
+```
+
+#### ContextConfig
+上下文构建配置。
+
+```typescript
+interface ContextConfig {
+  maxTokens: number;        // 最大 token 数量
+  reserveRatio: number;     // 为系统指令预留的比例 (0.0-1.0)
+  minRelevance: number;    // 最低相关性阈值
+  enableCompression: boolean; // 是否启用压缩
+  recencyWeight: number;   // 新近性权重 (0.0-1.0)
+  relevanceWeight: number; // 相关性权重 (0.0-1.0)
+}
+```
+
+### GSSC 流水线
+
+#### 1. Gather - 多源信息汇集
+从系统指令、记忆、RAG、对话历史等来源收集候选信息。
+
+#### 2. Select - 智能信息选择
+基于相关性 + 新近性综合评分，贪心选择填充 token 预算。
+
+```typescript
+combinedScore = relevanceWeight × relevance + recencyWeight × recency
+```
+
+#### 3. Structure - 结构化输出
+输出标准化五段式模板：
+
+```
+[Role & Policies]  ← 系统指令
+[Task]             ← 用户查询
+[Evidence]         ← RAG 检索结果
+[Context]          ← 记忆 + 对话历史
+[Output]           ← 输出引导
+```
+
+#### 4. Compress - 兜底压缩
+当上下文超限时，按 Section 顺序分区截断压缩。
+
+### 使用示例
+
+```typescript
+import { ContextBuilder, ContextConfig, buildContext } from './src';
+
+const builder = new ContextBuilder({
+  maxTokens: 3000,
+  reserveRatio: 0.2,
+  minRelevance: 0.1,
+  enableCompression: true,
+});
+
+const result = await builder.build({
+  userQuery: '如何优化 Pandas 内存?',
+  systemInstructions: '你是一位数据工程顾问。',
+  conversationHistory: [
+    { role: 'user', content: '我正在开发数据分析工具' },
+    { role: 'assistant', content: '很好，请继续。' }
+  ],
+  memoryTool,   // 可选
+  ragTool,      // 可选
+});
+
+console.log(result.structuredContext);
+console.log(`Token 使用: ${result.totalTokens}/${result.utilization * 100}%`);
+```
+
+---
 
 ## Agent 类型
 
@@ -281,6 +376,50 @@ const agent = new ReflectionAgent('助手', llm, {
   }
 });
 ```
+
+### ContextAwareAgent
+具备上下文感知能力的 Agent，集成 GSSC 流水线自动构建优化的上下文。
+
+```typescript
+import { ContextAwareAgent, HelloAgentsLLM } from './src';
+
+const agent = new ContextAwareAgent('智能顾问', llm, {
+  systemPrompt: '你是一位专业顾问。',
+  contextConfig: {
+    maxTokens: 4000,
+    reserveRatio: 0.2,
+    minRelevance: 0.1,
+    enableCompression: true,
+  },
+  memoryTool,  // 可选：记忆工具
+  ragTool,     // 可选：RAG 工具
+  autoMemory: true,  // 自动记录对话到记忆
+});
+
+// 运行 - 自动构建优化上下文
+const response = await agent.run('如何优化 Pandas 内存?');
+console.log(response);
+
+// 手动检索
+const memories = await agent.searchMemory('用户偏好');
+const knowledge = await agent.searchKnowledge('Pandas 优化');
+```
+
+#### ContextAwareAgent 配置选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| contextConfig | ContextConfig | 默认配置 | 上下文构建配置 |
+| memoryTool | ContextTool | undefined | 记忆工具 |
+| ragTool | ContextTool | undefined | RAG 工具 |
+| autoMemory | boolean | true | 自动记录对话到记忆 |
+
+#### 特性
+
+- **GSSC 流水线**: 自动汇集、选择、结构化、压缩上下文
+- **多源整合**: 记忆、RAG、对话历史智能融合
+- **自动记忆**: 对话自动记录到记忆系统
+- **动态配置**: 运行时更新上下文配置
 
 ## 工具
 

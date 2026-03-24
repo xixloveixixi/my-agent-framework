@@ -14,6 +14,8 @@ export { SimpleAgent } from './agents/simple-agent';
 export { ReActAgent } from './agents/react-agent';
 export { PlanAndSolveAgent } from './agents/plan-solve-agent';
 export { ReflectionAgent } from './agents/reflection-agent';
+export { ContextAwareAgent } from './agents/context-aware-agent';
+export type { ContextAwareAgentConfig } from './agents/context-aware-agent';
 
 // Tools 模块
 export { BaseTool } from './tools/base';
@@ -25,6 +27,9 @@ export { RAGTool, RAGQATool } from './tools/rag-tool';
 
 // Memory 模块
 export * from './memory';
+
+// Context 模块
+export * from './context';
 
 // Types
 export * from './types';
