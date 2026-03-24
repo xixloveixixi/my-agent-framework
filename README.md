@@ -71,6 +71,7 @@ src/
 │   ├── memory-tool.ts    # 记忆工具
 │   ├── rag-tool.ts       # RAG 工具
 │   ├── note-tool.ts      # 笔记工具
+│   ├── terminal-tool.ts  # 终端工具
 │   ├── registry.ts       # 工具注册表
 │   └── index.ts          # 工具导出
 │
@@ -711,7 +712,54 @@ const summary = await notes.execute({ action: 'summary' });
 | reference | 参考资料 |
 | general | 通用 |
 
-### 存储后端
+### TerminalTool
+
+安全的终端命令执行工具，提供多层安全机制确保系统安全。
+
+```typescript
+import { TerminalTool } from './src';
+
+// 创建工具实例
+const terminal = new TerminalTool({
+  workspace: './project',           // 工作目录（可选，默认当前目录）
+  timeout: 30000,                  // 命令超时（毫秒，默认 30000）
+  maxOutputSize: 10 * 1024 * 1024, // 最大输出大小（字节，默认 10MB）
+  allowCd: true                    // 是否允许 cd 命令（默认 true）
+});
+
+// 执行命令
+const result = await terminal.execute({ command: 'ls -la' });
+console.log(result);
+
+// 目录导航
+await terminal.execute({ command: 'cd src' });
+await terminal.execute({ command: 'pwd' });
+
+// 查看文件
+await terminal.execute({ command: 'cat README.md' });
+
+// 搜索文件
+await terminal.execute({ command: 'find . -name "*.ts"' });
+```
+
+#### 安全机制
+
+| 层级 | 说明 |
+|------|------|
+| 命令白名单 | 只允许安全的只读命令 (ls, cat, find, grep 等) |
+| 工作目录限制 | 只能在指定工作目录内操作，无法访问外部路径 |
+| 超时控制 | 默认 30 秒超时，防止命令无限运行 |
+| 输出大小限制 | 默认 10MB，防止内存溢出 |
+
+#### 允许的命令
+
+```
+awk, cat, cd, cut, df, dir, du, echo, egrep, fgrep,
+file, find, grep, head, less, ls, more, pwd, sed,
+sort, stat, tail, tree, uniq, wc, whereis, which
+```
+
+#### 存储后端
 
 #### 内存存储 (默认)
 
