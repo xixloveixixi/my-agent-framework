@@ -24,6 +24,11 @@ export { CalculatorTool } from './tools/calculator';
 export { SearchTool } from './tools/search';
 export { MemoryTool, LongTermMemoryTool } from './tools/memory-tool';
 export { RAGTool, RAGQATool } from './tools/rag-tool';
+export { NoteTool } from './tools/note-tool';
+export type { NoteMetadata, NoteType, NoteResult } from './tools/note-tool';
+export { TerminalTool } from './tools/terminal-tool';
+export type { TerminalToolOptions } from './tools/terminal-tool';
+export { MCPTool, createMCPTool, listBuiltinServers } from './tools/mcp-tool';
 
 // Memory 模块
 export * from './memory';
@@ -33,3 +38,6 @@ export * from './context';
 
 // Types
 export * from './types';
+
+// MCP 模块
+export * from './mcp';

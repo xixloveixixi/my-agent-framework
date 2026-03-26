@@ -24,6 +24,7 @@
     "typescript": "^5.3.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "adm-zip": "^0.5.16",
     "dotenv": "^16.3.1",
     "mammoth": "^1.12.0",

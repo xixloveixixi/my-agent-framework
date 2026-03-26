@@ -27,12 +27,11 @@ export class SimpleAgent extends Agent {
     const toolCount = (this.toolRegistry?.size() || 0) + this.tools.size;
 
     // 只有明确启用且有可用工具时才开启
-    this.enableToolCalling = (options?.enableToolCalling ?? true) && toolCount > 0;
+    // 默认启用工具调用，以便后续添加工具后可以使用
+    this.enableToolCalling = options?.enableToolCalling !== false;
 
     console.log(`✅ ${name} 初始化完成，工具调用: ${this.enableToolCalling ? '启用' : '禁用'}`);
-    if (this.enableToolCalling) {
-      console.log(`🔧 可用工具数量: ${toolCount}`);
-    }
+    console.log(`🔧 可用工具数量: ${toolCount}`);
   }
 
   /**
@@ -216,6 +215,27 @@ ${toolsDescription}
   }
 
   // ==================== 便利方法 ====================
+
+  /**
+   * 添加工具（支持 MCPTool 自动展开）
+   */
+  addTool(tool: Tool | { name: string; init(): Promise<void>; getExpandedTools(): Tool[] }): void {
+    // 检查是否有 init 方法（MCPTool）
+    if ('init' in tool && typeof tool.init === 'function') {
+      // MCPTool，需要先初始化
+      (async () => {
+        await tool.init();
+        const expandedTools = tool.getExpandedTools();
+        for (const t of expandedTools) {
+          this.tools.set(t.name, t);
+        }
+        console.log(`✅ MCP工具 '${tool.name}' 已展开为 ${expandedTools.length} 个独立工具`);
+      })();
+    } else {
+      // 普通 Tool
+      this.tools.set(tool.name, tool as Tool);
+    }
+  }
 
   /**
    * 检查是否有可用工具
